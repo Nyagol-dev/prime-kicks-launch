@@ -15,6 +15,7 @@ import { Route as ContactRouteImport } from './routes/contact'
 import { Route as LookbookRouteImport } from './routes/lookbook'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
 import { Route as ShopSlugRouteImport } from './routes/shop.$slug'
+import { Route as ApiPublicImgSplatRouteImport } from './routes/api/public/img/$'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -46,6 +47,11 @@ const ShopSlugRoute = ShopSlugRouteImport.update({
   path: '/shop/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicImgSplatRoute = ApiPublicImgSplatRouteImport.update({
+  id: '/api/public/img/$',
+  path: '/api/public/img/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -54,6 +60,7 @@ export interface FileRoutesByFullPath {
   '/lookbook': typeof LookbookRoute
   '/shop/$slug': typeof ShopSlugRoute
   '/shop/': typeof ShopIndexRoute
+  '/api/public/img/$': typeof ApiPublicImgSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -62,6 +69,7 @@ export interface FileRoutesByTo {
   '/lookbook': typeof LookbookRoute
   '/shop/$slug': typeof ShopSlugRoute
   '/shop': typeof ShopIndexRoute
+  '/api/public/img/$': typeof ApiPublicImgSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -71,13 +79,27 @@ export interface FileRoutesById {
   '/lookbook': typeof LookbookRoute
   '/shop/$slug': typeof ShopSlugRoute
   '/shop/': typeof ShopIndexRoute
+  '/api/public/img/$': typeof ApiPublicImgSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/about' | '/contact' | '/lookbook' | '/shop/$slug' | '/shop/'
+    | '/'
+    | '/about'
+    | '/contact'
+    | '/lookbook'
+    | '/shop/$slug'
+    | '/shop/'
+    | '/api/public/img/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/about' | '/contact' | '/lookbook' | '/shop/$slug' | '/shop'
+  to:
+    | '/'
+    | '/about'
+    | '/contact'
+    | '/lookbook'
+    | '/shop/$slug'
+    | '/shop'
+    | '/api/public/img/$'
   id:
     | '__root__'
     | '/'
@@ -86,6 +108,7 @@ export interface FileRouteTypes {
     | '/lookbook'
     | '/shop/$slug'
     | '/shop/'
+    | '/api/public/img/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -95,6 +118,7 @@ export interface RootRouteChildren {
   LookbookRoute: typeof LookbookRoute
   ShopSlugRoute: typeof ShopSlugRoute
   ShopIndexRoute: typeof ShopIndexRoute
+  ApiPublicImgSplatRoute: typeof ApiPublicImgSplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -141,6 +165,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShopSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/img/$': {
+      id: '/api/public/img/$'
+      path: '/api/public/img/$'
+      fullPath: '/api/public/img/$'
+      preLoaderRoute: typeof ApiPublicImgSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -151,6 +182,7 @@ const rootRouteChildren: RootRouteChildren = {
   LookbookRoute: LookbookRoute,
   ShopSlugRoute: ShopSlugRoute,
   ShopIndexRoute: ShopIndexRoute,
+  ApiPublicImgSplatRoute: ApiPublicImgSplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
