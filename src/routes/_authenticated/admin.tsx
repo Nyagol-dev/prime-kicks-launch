@@ -4,7 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Plus, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { signOut as signOutFn } from "@/lib/auth.functions";
 import { Logo } from "@/components/site/Logo";
 import { ksh, BRAND } from "@/lib/format";
 import {
@@ -41,14 +41,12 @@ const field =
   "w-full border border-border bg-surface px-3 py-2.5 text-sm outline-none transition-colors focus:border-primary";
 
 async function uploadImage(file: File): Promise<string> {
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-  const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const { error } = await supabase.storage.from("shop-images").upload(path, file, {
-    cacheControl: "31536000",
-    upsert: false,
-  });
-  if (error) throw new Error(error.message);
-  return `/api/public/img/${path}`;
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch('/api/upload', { method: 'POST', body: formData });
+  if (!res.ok) throw new Error(await res.text());
+  const { url } = (await res.json()) as { url: string };
+  return url;
 }
 
 function AdminPage() {
@@ -56,6 +54,7 @@ function AdminPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("orders");
   const isAdminFn = useServerFn(checkAdmin);
+  const signOutServerFn = useServerFn(signOutFn);
 
   const { data: access, isLoading } = useQuery({
     queryKey: ["is-admin"],
@@ -65,7 +64,7 @@ function AdminPage() {
   async function signOut() {
     await queryClient.cancelQueries();
     queryClient.clear();
-    await supabase.auth.signOut();
+    await signOutServerFn({});
     void navigate({ to: "/auth", replace: true });
   }
 
@@ -148,20 +147,13 @@ function OrdersPanel() {
   const queryClient = useQueryClient();
   const list = useServerFn(adminListOrders);
   const setStatus = useServerFn(adminSetOrderStatus);
-  const { data, isLoading } = useQuery({ queryKey: ["admin-orders"], queryFn: () => list({}) });
 
-  useEffect(() => {
-    const channel = supabase
-      .channel("orders-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
-        void queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
-        toast.success("New order activity");
-      })
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
+  // Poll for new orders every 15 seconds instead of Supabase Realtime
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin-orders"],
+    queryFn: () => list({}),
+    refetchInterval: 15_000,
+  });
 
   if (isLoading) return <Loader2 className="h-5 w-5 animate-spin text-primary" />;
   const orders = data ?? [];

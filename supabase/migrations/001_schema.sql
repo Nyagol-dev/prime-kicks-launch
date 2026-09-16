@@ -1,59 +1,23 @@
 -- =============================================================
--- Prime Kicks — full schema
--- Run once against a fresh Supabase (or local psql) instance.
+-- Prime Kicks — full schema (plain PostgreSQL, no Supabase extensions)
+-- Run once against a fresh database.
 -- =============================================================
 
 -- ------------------------------------------------------------
--- ROLES
+-- EXTENSIONS
 -- ------------------------------------------------------------
-CREATE TYPE public.app_role AS ENUM ('admin');
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";  -- gen_random_uuid()
 
-CREATE TABLE public.user_roles (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id    uuid NOT NULL,
-  role       public.app_role NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (user_id, role)
+-- ------------------------------------------------------------
+-- USERS  (custom auth — no Supabase auth.users dependency)
+-- ------------------------------------------------------------
+CREATE TABLE public.users (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email         text NOT NULL UNIQUE,
+  password_hash text NOT NULL,
+  is_admin      boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now()
 );
-
-GRANT SELECT ON public.user_roles TO authenticated;
-GRANT ALL    ON public.user_roles TO service_role;
-ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "own roles readable"
-  ON public.user_roles FOR SELECT TO authenticated
-  USING (auth.uid() = user_id);
-
--- Helper: check whether a user holds a given role
-CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role public.app_role)
-RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role
-  )
-$$;
-
--- Lock down has_role: only service_role may call it directly
-REVOKE ALL ON FUNCTION public.has_role(uuid, public.app_role)
-  FROM PUBLIC, anon, authenticated;
-
--- First signed-up user automatically becomes admin (the shop owner)
-CREATE OR REPLACE FUNCTION public.bootstrap_first_admin()
-RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.user_roles WHERE role = 'admin') THEN
-    INSERT INTO public.user_roles (user_id, role) VALUES (NEW.id, 'admin');
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-REVOKE ALL ON FUNCTION public.bootstrap_first_admin()
-  FROM PUBLIC, anon, authenticated;
-
-CREATE TRIGGER on_auth_user_created_bootstrap_admin
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.bootstrap_first_admin();
 
 -- ------------------------------------------------------------
 -- PRODUCTS
@@ -72,18 +36,6 @@ CREATE TABLE public.products (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
-GRANT SELECT                        ON public.products TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.products TO authenticated;
-GRANT ALL                            ON public.products TO service_role;
-ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "products public read"
-  ON public.products FOR SELECT TO anon, authenticated USING (true);
-CREATE POLICY "products admin write"
-  ON public.products FOR ALL TO authenticated
-  USING     (public.has_role(auth.uid(), 'admin'))
-  WITH CHECK (public.has_role(auth.uid(), 'admin'));
-
 CREATE TABLE public.product_sizes (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   product_id uuid NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
@@ -92,40 +44,16 @@ CREATE TABLE public.product_sizes (
   UNIQUE (product_id, size)
 );
 
-GRANT SELECT                        ON public.product_sizes TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.product_sizes TO authenticated;
-GRANT ALL                            ON public.product_sizes TO service_role;
-ALTER TABLE public.product_sizes ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "sizes public read"
-  ON public.product_sizes FOR SELECT TO anon, authenticated USING (true);
-CREATE POLICY "sizes admin write"
-  ON public.product_sizes FOR ALL TO authenticated
-  USING     (public.has_role(auth.uid(), 'admin'))
-  WITH CHECK (public.has_role(auth.uid(), 'admin'));
-
 -- ------------------------------------------------------------
 -- LOOKBOOK
 -- ------------------------------------------------------------
 CREATE TABLE public.lookbook_photos (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  image_url   text NOT NULL,
-  caption     text NOT NULL DEFAULT '',
-  sort_order  integer NOT NULL DEFAULT 0,
-  created_at  timestamptz NOT NULL DEFAULT now()
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  image_url  text NOT NULL,
+  caption    text NOT NULL DEFAULT '',
+  sort_order integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
-
-GRANT SELECT                        ON public.lookbook_photos TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.lookbook_photos TO authenticated;
-GRANT ALL                            ON public.lookbook_photos TO service_role;
-ALTER TABLE public.lookbook_photos ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "lookbook public read"
-  ON public.lookbook_photos FOR SELECT TO anon, authenticated USING (true);
-CREATE POLICY "lookbook admin write"
-  ON public.lookbook_photos FOR ALL TO authenticated
-  USING     (public.has_role(auth.uid(), 'admin'))
-  WITH CHECK (public.has_role(auth.uid(), 'admin'));
 
 -- ------------------------------------------------------------
 -- ORDERS
@@ -144,18 +72,6 @@ CREATE TABLE public.orders (
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 
-GRANT SELECT, UPDATE ON public.orders TO authenticated;
-GRANT ALL             ON public.orders TO service_role;
-ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "orders admin read"
-  ON public.orders FOR SELECT TO authenticated
-  USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "orders admin update"
-  ON public.orders FOR UPDATE TO authenticated
-  USING     (public.has_role(auth.uid(), 'admin'))
-  WITH CHECK (public.has_role(auth.uid(), 'admin'));
-
 CREATE TABLE public.order_items (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id     uuid NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
@@ -166,16 +82,8 @@ CREATE TABLE public.order_items (
   unit_price   integer NOT NULL
 );
 
-GRANT SELECT ON public.order_items TO authenticated;
-GRANT ALL    ON public.order_items TO service_role;
-ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "order items admin read"
-  ON public.order_items FOR SELECT TO authenticated
-  USING (public.has_role(auth.uid(), 'admin'));
-
 -- ------------------------------------------------------------
--- SETTINGS  (owner-only key/value store)
+-- SETTINGS  (key-value store for owner config)
 -- ------------------------------------------------------------
 CREATE TABLE public.settings (
   key        text PRIMARY KEY,
@@ -183,17 +91,9 @@ CREATE TABLE public.settings (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-GRANT SELECT, INSERT, UPDATE ON public.settings TO authenticated;
-GRANT ALL                    ON public.settings TO service_role;
-ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "settings admin all"
-  ON public.settings FOR ALL TO authenticated
-  USING     (public.has_role(auth.uid(), 'admin'))
-  WITH CHECK (public.has_role(auth.uid(), 'admin'));
-
-INSERT INTO public.settings (key, value)
-  VALUES ('callmebot_phone', ''), ('callmebot_apikey', '');
+INSERT INTO public.settings (key, value) VALUES
+  ('callmebot_phone', ''),
+  ('callmebot_apikey', '');
 
 -- ------------------------------------------------------------
 -- CHECKOUT  (atomic order placement with stock decrement)
@@ -206,7 +106,7 @@ CREATE OR REPLACE FUNCTION public.place_order(
   p_notes           text,
   p_items           jsonb
 ) RETURNS TABLE (order_id uuid, order_code text, total integer)
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql AS $$
 DECLARE
   v_order_id uuid;
   v_code     text;
@@ -275,33 +175,6 @@ BEGIN
   RETURN QUERY SELECT v_order_id, v_code, v_total;
 END;
 $$;
-
-REVOKE ALL ON FUNCTION public.place_order(text, text, text, text, text, jsonb)
-  FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.place_order(text, text, text, text, text, jsonb)
-  TO anon, authenticated, service_role;
-
--- Enable realtime for orders dashboard
-ALTER PUBLICATION supabase_realtime ADD TABLE public.orders;
-
--- ------------------------------------------------------------
--- STORAGE POLICIES  (bucket: shop-images)
--- ------------------------------------------------------------
-CREATE POLICY "shop images read"
-  ON storage.objects FOR SELECT TO anon, authenticated
-  USING (bucket_id = 'shop-images');
-
-CREATE POLICY "shop images admin insert"
-  ON storage.objects FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'shop-images' AND public.has_role(auth.uid(), 'admin'));
-
-CREATE POLICY "shop images admin update"
-  ON storage.objects FOR UPDATE TO authenticated
-  USING (bucket_id = 'shop-images' AND public.has_role(auth.uid(), 'admin'));
-
-CREATE POLICY "shop images admin delete"
-  ON storage.objects FOR DELETE TO authenticated
-  USING (bucket_id = 'shop-images' AND public.has_role(auth.uid(), 'admin'));
 
 -- ------------------------------------------------------------
 -- SEED DATA
